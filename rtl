@@ -1,0 +1,99 @@
+module code(input clk,
+input resetn,
+input[31:0] dataIn, //taken size of packet 32 bits
+input validIn,
+input lastIn,
+output reg[31:0] dataOut, //32 bits sent per clk cycle
+output reg validOut,
+output reg lastOut
+);
+
+parameter IDLE=3'b000,
+          DATA=3'b001,
+          HEADER=3'b010,
+          PAYLOAD=3'b011,
+          FOOTER=3'b100;
+
+reg[2:0] state;
+reg[31:0] payload[380:0];
+reg[8:0] cnt; //9 bits to count 381
+reg[15:0] seq;
+reg[8:0] ptr;
+
+always @(posedge clk)begin
+if(!resetn)begin //synch active low reset used
+//we do not reset the payload as it will require more clk since it is a memory
+cnt<=0;
+ptr<=0;  
+state<=IDLE;
+seq<=0;
+dataOut<=0;
+validOut<=0;
+lastOut<=0;
+end
+
+//we wre not receiving new input while sending one output. To do that we can use a Dual port RAM where we can write and read at the same time
+else begin
+validOut<=0; //set as default 0
+lastOut<=0;
+case(state)
+        IDLE:begin
+        cnt<=0;  
+        ptr<=0;
+        dataOut<=0;
+        if(validIn==1)begin
+          payload[0] <= dataIn;
+          cnt <= 1;
+          if(lastIn==1)
+         state <= HEADER;
+          else
+         state<=DATA; 
+          end
+        end
+        
+        DATA:begin //each 32 bit word of payload is received at each clk until lastIn=1
+        if(validIn==1)begin
+          if(cnt<381)begin
+           payload[cnt]<=dataIn;
+           cnt<=cnt+1;
+          end
+          if(lastIn==1 || cnt==380)begin
+          state<=HEADER;
+          end
+        end
+        end
+
+        HEADER:begin //sent all at once in a clk
+          dataOut<={{7'b0,cnt},seq};
+          validOut<=1;
+          state<=PAYLOAD;
+        end
+    	
+  		PAYLOAD:begin //sent as one word in one clk cycle
+          if(ptr<cnt)begin
+          dataOut<=payload[ptr];
+          validOut<=1;
+            
+          if(ptr==cnt-1) //when last payload is sent, the value of ptr will be updated in next cycle thus we compared with (cnt-1)
+          state<=FOOTER;
+          
+          ptr<=ptr+1;
+          end
+        end
+        
+        FOOTER:begin  //send in 1 clk cycle
+          dataOut<=32'hFFFF_FFFF;
+          validOut<=1;
+          lastOut<=1;
+          seq<=seq+1;
+          state<=IDLE;
+        end
+        
+        default:begin
+          state<=IDLE;
+        end
+endcase
+end
+end
+  
+endmodule
